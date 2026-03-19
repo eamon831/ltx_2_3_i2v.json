@@ -1,14 +1,18 @@
 # clean base image containing only comfyui, comfy-cli and comfyui-manager
 FROM runpod/worker-comfyui:5.5.1-base
 
-# install custom nodes into comfyui
-# No registry-verified custom nodes found.
-# Unknown registry custom nodes were present but no aux_id provided, so they could not be resolved:
-# - MarkdownNote (unknown_registry) - no aux_id; skipped
-# - MarkdownNote (unknown_registry) - no aux_id; skipped
+# install custom nodes
+RUN cd /comfyui/custom_nodes && \
+    git clone https://github.com/Lightricks/ComfyUI-LTXVideo.git && \
+    cd ComfyUI-LTXVideo && \
+    pip install -r requirements.txt || true
 
-# download models into comfyui
-# No models specified in workflow
+# models are pre-loaded on the RunPod network volume — no download needed
+# Expected paths on network volume:
+#   checkpoints/ltx-2.3-22b-dev-fp8.safetensors
+#   loras/ltx-2.3-22b-distilled-lora-384.safetensors
+#   loras/gemma-3-12b-it-abliterated_lora_rank64_bf16.safetensors
+#   latent_upscale_models/ltx-2.3-spatial-upscaler-x2-1.0.safetensors
 
 # copy all input data (like images or videos) into comfyui (uncomment and adjust if needed)
 # COPY input/ /comfyui/input/
