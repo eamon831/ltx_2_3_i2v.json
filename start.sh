@@ -63,17 +63,15 @@ if [ -f "$COMFYUI_DIR/requirements.txt" ]; then
     echo "worker: PyTorch after install: $(python3 -c 'import torch; print(torch.__version__)' 2>/dev/null)"
 fi
 
-# ---- Install custom node dependencies from baked image ----
-if [ -d "/opt/comfyui-baked/ComfyUI/custom_nodes/ComfyUI-LTXVideo" ] && \
-   [ ! -d "$COMFYUI_DIR/custom_nodes/ComfyUI-LTXVideo" ]; then
-    echo "worker: Linking ComfyUI-LTXVideo custom node"
-    ln -s /opt/comfyui-baked/ComfyUI/custom_nodes/ComfyUI-LTXVideo \
-          "$COMFYUI_DIR/custom_nodes/ComfyUI-LTXVideo"
-elif [ -d "$COMFYUI_DIR/custom_nodes/ComfyUI-LTXVideo" ]; then
-    echo "worker: ComfyUI-LTXVideo already exists on volume"
-else
-    echo "worker: WARNING — ComfyUI-LTXVideo not found in baked image or volume"
-fi
+# ---- Install custom node requirements from volume ----
+echo "worker: Installing custom node requirements..."
+for req in "$COMFYUI_DIR"/custom_nodes/*/requirements.txt; do
+    if [ -f "$req" ]; then
+        node_name=$(basename "$(dirname "$req")")
+        echo "worker:   $node_name"
+        grep -v -i "^torch" "$req" | pip install -q -r /dev/stdin 2>&1 | tail -3
+    fi
+done
 
 # ---- List custom nodes ----
 echo "worker: Custom nodes on volume:"
