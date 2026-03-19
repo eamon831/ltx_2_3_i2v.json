@@ -1,42 +1,24 @@
 #!/usr/bin/env bash
+# Serverless start.sh — starts ComfyUI + RunPod handler
+# Based on comfyui-base's start.sh but stripped for serverless use
 
-# === CUSTOM: Bridge comfyui-base volume layout to serverless expected layout ===
-# Network volume set up with comfyui-base stores models at:
-#   /runpod-volume/runpod-slim/ComfyUI/models/
-# But worker-comfyui expects them at:
-#   /runpod-volume/models/
-# Create a symlink at runtime (volume is mounted now) to bridge the gap.
-if [ -d "/runpod-volume/runpod-slim/ComfyUI/models" ] && [ ! -e "/runpod-volume/models" ]; then
-    ln -s /runpod-volume/runpod-slim/ComfyUI/models /runpod-volume/models
-    echo "worker-comfyui: Linked comfyui-base models to /runpod-volume/models"
+set -e
+
+# ---- Paths ----
+# comfyui-base stores ComfyUI on the network volume at this path
+# On pods: /workspace/runpod-slim/ComfyUI
+# On serverless: /runpod-volume/runpod-slim/ComfyUI
+COMFYUI_DIR="/runpod-volume/runpod-slim/ComfyUI"
+BAKED_DIR="/opt/comfyui-baked/ComfyUI"
+
+# ---- Memory optimization ----
+TCMALLOC="$(ldconfig -p | grep -Po "libtcmalloc.so.\d" | head -n 1)" || true
+if [ -n "$TCMALLOC" ]; then
+    export LD_PRELOAD="${TCMALLOC}"
 fi
 
-# Start SSH server if PUBLIC_KEY is set (enables remote access and dev-sync.sh)
-if [ -n "$PUBLIC_KEY" ]; then
-    mkdir -p ~/.ssh
-    echo "$PUBLIC_KEY" > ~/.ssh/authorized_keys
-    chmod 700 ~/.ssh
-    chmod 600 ~/.ssh/authorized_keys
-
-    # Generate host keys if they don't exist (removed during image build for security)
-    for key_type in rsa ecdsa ed25519; do
-        key_file="/etc/ssh/ssh_host_${key_type}_key"
-        if [ ! -f "$key_file" ]; then
-            ssh-keygen -t "$key_type" -f "$key_file" -q -N ''
-        fi
-    done
-
-    service ssh start && echo "worker-comfyui: SSH server started" || echo "worker-comfyui: SSH server could not be started" >&2
-fi
-
-# Use libtcmalloc for better memory management
-TCMALLOC="$(ldconfig -p | grep -Po "libtcmalloc.so.\d" | head -n 1)"
-export LD_PRELOAD="${TCMALLOC}"
-
-# ---------------------------------------------------------------------------
-# GPU pre-flight check
-# ---------------------------------------------------------------------------
-echo "worker-comfyui: Checking GPU availability..."
+# ---- GPU pre-flight check ----
+echo "worker: Checking GPU availability..."
 if ! GPU_CHECK=$(python3 -c "
 import torch
 try:
@@ -47,36 +29,52 @@ except Exception as e:
     print(f'FAIL: {e}')
     exit(1)
 " 2>&1); then
-    echo "worker-comfyui: GPU is not available. PyTorch CUDA init failed:"
-    echo "worker-comfyui: $GPU_CHECK"
-    echo "worker-comfyui: This usually means the GPU on this machine is not properly initialized."
-    echo "worker-comfyui: Please contact RunPod support and report this machine."
+    echo "worker: GPU not available: $GPU_CHECK"
     exit 1
 fi
-echo "worker-comfyui: GPU available — $GPU_CHECK"
+echo "worker: GPU available — $GPU_CHECK"
 
-# Ensure ComfyUI-Manager runs in offline network mode inside the container
-comfy-manager-set-mode offline || echo "worker-comfyui - Could not set ComfyUI-Manager network_mode" >&2
+# ---- Locate ComfyUI ----
+if [ -d "$COMFYUI_DIR" ]; then
+    echo "worker: Using ComfyUI from network volume: $COMFYUI_DIR"
+elif [ -d "$BAKED_DIR" ]; then
+    echo "worker: Network volume ComfyUI not found, using baked: $BAKED_DIR"
+    COMFYUI_DIR="$BAKED_DIR"
+else
+    echo "worker: ERROR — ComfyUI not found at $COMFYUI_DIR or $BAKED_DIR"
+    exit 1
+fi
 
-echo "worker-comfyui: Starting ComfyUI"
+# ---- Install custom node dependencies from baked image ----
+# The LTX Video node was installed into /opt/comfyui-baked at build time
+# Symlink it into the volume's ComfyUI if not already there
+if [ -d "/opt/comfyui-baked/ComfyUI/custom_nodes/ComfyUI-LTXVideo" ] && \
+   [ ! -d "$COMFYUI_DIR/custom_nodes/ComfyUI-LTXVideo" ]; then
+    echo "worker: Linking ComfyUI-LTXVideo custom node"
+    ln -s /opt/comfyui-baked/ComfyUI/custom_nodes/ComfyUI-LTXVideo \
+          "$COMFYUI_DIR/custom_nodes/ComfyUI-LTXVideo"
+fi
 
-# Allow operators to tweak verbosity; default is DEBUG.
-: "${COMFY_LOG_LEVEL:=DEBUG}"
+# ---- Set ComfyUI-Manager to offline mode ----
+MANAGER_CONFIG="$COMFYUI_DIR/user/default/ComfyUI-Manager/config.ini"
+if [ -f "$MANAGER_CONFIG" ]; then
+    sed -i 's/network_mode = .*/network_mode = offline/' "$MANAGER_CONFIG" 2>/dev/null || true
+    echo "worker: ComfyUI-Manager set to offline mode"
+fi
 
-# PID file used by the handler to detect if ComfyUI is still running
+# ---- Start ComfyUI ----
+echo "worker: Starting ComfyUI from $COMFYUI_DIR"
 COMFY_PID_FILE="/tmp/comfyui.pid"
 
-# Serve the API and don't shutdown the container
-if [ "$SERVE_API_LOCALLY" == "true" ]; then
-    python -u /comfyui/main.py --disable-auto-launch --disable-metadata --listen --verbose "${COMFY_LOG_LEVEL}" --log-stdout &
-    echo $! > "$COMFY_PID_FILE"
+python3 -u "$COMFYUI_DIR/main.py" \
+    --listen 0.0.0.0 \
+    --port 8188 \
+    --disable-auto-launch \
+    --disable-metadata \
+    --log-stdout &
 
-    echo "worker-comfyui: Starting RunPod Handler"
-    python -u /handler.py --rp_serve_api --rp_api_host=0.0.0.0
-else
-    python -u /comfyui/main.py --disable-auto-launch --disable-metadata --verbose "${COMFY_LOG_LEVEL}" --log-stdout &
-    echo $! > "$COMFY_PID_FILE"
+echo $! > "$COMFY_PID_FILE"
 
-    echo "worker-comfyui: Starting RunPod Handler"
-    python -u /handler.py
-fi
+# ---- Start RunPod Handler ----
+echo "worker: Starting RunPod serverless handler"
+python3 -u /handler.py
