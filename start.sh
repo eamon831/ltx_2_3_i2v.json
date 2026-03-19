@@ -5,11 +5,18 @@
 set -e
 
 # ---- Paths ----
-# comfyui-base stores ComfyUI on the network volume at this path
-# On pods: /workspace/runpod-slim/ComfyUI
-# On serverless: /runpod-volume/runpod-slim/ComfyUI
 COMFYUI_DIR="/runpod-volume/runpod-slim/ComfyUI"
 BAKED_DIR="/opt/comfyui-baked/ComfyUI"
+
+# ---- Debug: show environment ----
+echo "worker: ============ DEBUG INFO ============"
+echo "worker: Python: $(python3 --version)"
+echo "worker: PyTorch: $(python3 -c 'import torch; print(torch.__version__)' 2>/dev/null || echo 'not found')"
+echo "worker: CUDA available: $(python3 -c 'import torch; print(torch.cuda.is_available())' 2>/dev/null || echo 'unknown')"
+echo "worker: CUDA version (torch): $(python3 -c 'import torch; print(torch.version.cuda)' 2>/dev/null || echo 'unknown')"
+echo "worker: Base image: $(cat /etc/runpod-image-tag 2>/dev/null || echo 'unknown')"
+echo "worker: Volume mount: $(ls -la /runpod-volume/ 2>/dev/null | head -3 || echo 'not mounted')"
+echo "worker: ======================================="
 
 # ---- Memory optimization ----
 TCMALLOC="$(ldconfig -p | grep -Po "libtcmalloc.so.\d" | head -n 1)" || true
@@ -46,33 +53,46 @@ else
 fi
 
 # ---- Install ComfyUI dependencies from volume ----
-# Volume's ComfyUI may need packages not in the base image (e.g. comfy_aimdo)
 # IMPORTANT: Skip torch/torchvision/torchaudio — the image has cu130 for RTX 5090,
 # but the volume's requirements.txt has cu128 which would downgrade it
 if [ -f "$COMFYUI_DIR/requirements.txt" ]; then
-    echo "worker: Installing ComfyUI requirements from volume (skipping torch)..."
+    echo "worker: Volume requirements.txt contents (torch lines):"
+    grep -i "^torch" "$COMFYUI_DIR/requirements.txt" || echo "  (no torch lines found)"
+    echo "worker: Installing non-torch requirements from volume..."
     grep -v -i "^torch" "$COMFYUI_DIR/requirements.txt" | pip install -q -r /dev/stdin 2>&1 | tail -5
+    echo "worker: PyTorch after install: $(python3 -c 'import torch; print(torch.__version__)' 2>/dev/null)"
 fi
 
 # ---- Install custom node dependencies from baked image ----
-# The LTX Video node was installed into /opt/comfyui-baked at build time
-# Symlink it into the volume's ComfyUI if not already there
 if [ -d "/opt/comfyui-baked/ComfyUI/custom_nodes/ComfyUI-LTXVideo" ] && \
    [ ! -d "$COMFYUI_DIR/custom_nodes/ComfyUI-LTXVideo" ]; then
     echo "worker: Linking ComfyUI-LTXVideo custom node"
     ln -s /opt/comfyui-baked/ComfyUI/custom_nodes/ComfyUI-LTXVideo \
           "$COMFYUI_DIR/custom_nodes/ComfyUI-LTXVideo"
+elif [ -d "$COMFYUI_DIR/custom_nodes/ComfyUI-LTXVideo" ]; then
+    echo "worker: ComfyUI-LTXVideo already exists on volume"
+else
+    echo "worker: WARNING — ComfyUI-LTXVideo not found in baked image or volume"
 fi
+
+# ---- List custom nodes ----
+echo "worker: Custom nodes on volume:"
+ls -1 "$COMFYUI_DIR/custom_nodes/" 2>/dev/null || echo "  (none)"
 
 # ---- Set ComfyUI-Manager to offline mode ----
 MANAGER_CONFIG="$COMFYUI_DIR/user/default/ComfyUI-Manager/config.ini"
-if [ -f "$MANAGER_CONFIG" ]; then
-    sed -i 's/network_mode = .*/network_mode = offline/' "$MANAGER_CONFIG" 2>/dev/null || true
-    echo "worker: ComfyUI-Manager set to offline mode"
-fi
+MANAGER_CONFIG2="$COMFYUI_DIR/user/__manager/config.ini"
+for cfg in "$MANAGER_CONFIG" "$MANAGER_CONFIG2"; do
+    if [ -f "$cfg" ]; then
+        sed -i 's/network_mode = .*/network_mode = offline/' "$cfg" 2>/dev/null || true
+        echo "worker: Set offline mode in $cfg"
+    fi
+done
 
 # ---- Start ComfyUI ----
 echo "worker: Starting ComfyUI from $COMFYUI_DIR"
+echo "worker: Final PyTorch version: $(python3 -c 'import torch; print(torch.__version__)' 2>/dev/null)"
+echo "worker: Final CUDA version: $(python3 -c 'import torch; print(torch.version.cuda)' 2>/dev/null)"
 COMFY_PID_FILE="/tmp/comfyui.pid"
 
 python3 -u "$COMFYUI_DIR/main.py" \
