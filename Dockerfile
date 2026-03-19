@@ -3,6 +3,8 @@ FROM runpod/worker-comfyui:5.5.1-base
 
 # update ComfyUI to latest (base image has v0.3.68 which is too old for LTX 2.3)
 RUN cd /comfyui && \
+    git fetch origin master && \
+    git checkout master && \
     git pull origin master
 
 # install custom nodes
