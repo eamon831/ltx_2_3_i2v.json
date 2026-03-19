@@ -1,0 +1,40 @@
+{
+  "input": {
+    "workflow": {
+      "75": {
+        "inputs": {
+          "filename": "video/LTX_2.3_i2v",
+          "video": [
+            "267",
+            0
+          ]
+        },
+        "class_type": "SaveVideo",
+        "_meta": {
+          "title": "SaveVideo"
+        }
+      },
+      "267": {
+        "inputs": {
+          "input": [
+            "269",
+            0
+          ]
+        },
+        "class_type": "b94257db-cdc1-45d3-8913-ca61e782d9c1",
+        "_meta": {
+          "title": "b94257db-cdc1-45d3-8913-ca61e782d9c1"
+        }
+      },
+      "269": {
+        "inputs": {
+          "image": "egyptian_queen.png"
+        },
+        "class_type": "LoadImage",
+        "_meta": {
+          "title": "LoadImage"
+        }
+      }
+    }
+  }
+}
