@@ -1,5 +1,5 @@
 # clean base image containing only comfyui, comfy-cli and comfyui-manager
-FROM runpod/worker-comfyui:5.8.3-base
+FROM runpod/worker-comfyui:latest-base
 
 # fix model paths — network volume uses comfyui-base layout
 COPY extra_model_paths.yaml /comfyui/extra_model_paths.yaml
