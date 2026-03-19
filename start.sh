@@ -45,6 +45,13 @@ else
     exit 1
 fi
 
+# ---- Install ComfyUI dependencies from volume ----
+# Volume's ComfyUI may need packages not in the base image (e.g. comfy_aimdo)
+if [ -f "$COMFYUI_DIR/requirements.txt" ]; then
+    echo "worker: Installing ComfyUI requirements from volume..."
+    pip install -q -r "$COMFYUI_DIR/requirements.txt" 2>&1 | tail -5
+fi
+
 # ---- Install custom node dependencies from baked image ----
 # The LTX Video node was installed into /opt/comfyui-baked at build time
 # Symlink it into the volume's ComfyUI if not already there
