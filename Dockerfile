@@ -1,5 +1,5 @@
 # Use the SAME base image as our pod — zero path conflicts
-FROM runpod/comfyui:latest
+FROM runpod/comfyui:latest-5090
 
 # Install serverless handler dependencies
 RUN pip install --no-cache-dir runpod requests websocket-client
