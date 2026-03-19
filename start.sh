@@ -47,9 +47,11 @@ fi
 
 # ---- Install ComfyUI dependencies from volume ----
 # Volume's ComfyUI may need packages not in the base image (e.g. comfy_aimdo)
+# IMPORTANT: Skip torch/torchvision/torchaudio — the image has cu130 for RTX 5090,
+# but the volume's requirements.txt has cu128 which would downgrade it
 if [ -f "$COMFYUI_DIR/requirements.txt" ]; then
-    echo "worker: Installing ComfyUI requirements from volume..."
-    pip install -q -r "$COMFYUI_DIR/requirements.txt" 2>&1 | tail -5
+    echo "worker: Installing ComfyUI requirements from volume (skipping torch)..."
+    grep -v -i "^torch" "$COMFYUI_DIR/requirements.txt" | pip install -q -r /dev/stdin 2>&1 | tail -5
 fi
 
 # ---- Install custom node dependencies from baked image ----
